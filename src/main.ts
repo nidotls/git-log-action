@@ -29,7 +29,7 @@ async function run(): Promise<void> {
 
     for (const commit of commits.all) {
       textLog += `${commit.abbrev} - ${commit.author} - ${commit.message}\n`
-      markdownLog += `[${commit.abbrev}](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/commit/${commit.abbrev}) ${commit.author} - ${commit.message}\n`
+      markdownLog += `[\`${commit.abbrev}\`](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/commit/${commit.abbrev}) ${commit.author} - ${commit.message}\n`
     }
 
     core.info(`previousTag: ${previousTag}`)
