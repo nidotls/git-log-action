@@ -36,6 +36,8 @@ async function run(): Promise<void> {
     core.info(`latestTag: ${latestTag}`)
     core.info(textLog)
 
+    core.setOutput('previousTag', previousTag)
+    core.setOutput('latestTag', latestTag)
     core.setOutput('log', textLog)
     core.setOutput('markdownLog', markdownLog)
   } catch (error) {
