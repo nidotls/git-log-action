@@ -7,48 +7,29 @@ async function run(): Promise<void> {
 
     const tags = await git.tags()
 
-    if (tags.all.length < 1) {
-      core.setFailed(`No tags available: ${JSON.stringify(tags)}`)
-      return
-    }
-
     const previousTag =
-      tags.all.length < 2 ? null : tags.all[tags.all.length - 2]
-    const latestTag = tags.latest
+      tags.all.length < 2 ? undefined : tags.all[tags.all.length - 2]
+    const latestTag =
+      tags.all.length < 1 ? undefined : tags.all[tags.all.length - 1]
 
-    let commits
-
-    if (previousTag == null) {
-      commits = await git.log({
-        to: latestTag,
-        format: {
-          abbrev: '%h',
-          author: '@%an',
-          message: '%s'
-        },
-        splitter: '\n',
-        multiLine: false
-      })
-    } else {
-      commits = await git.log({
-        from: previousTag,
-        to: latestTag,
-        format: {
-          abbrev: '%h',
-          author: '@%an',
-          message: '%s'
-        },
-        splitter: '\n',
-        multiLine: false
-      })
-    }
+    const commits = await git.log({
+      from: previousTag,
+      to: latestTag,
+      format: {
+        abbrev: '%h',
+        author: '@%an',
+        message: '%s'
+      },
+      splitter: '\n',
+      multiLine: false
+    })
 
     let textLog = ''
     let markdownLog = ''
 
     for (const commit of commits.all) {
       textLog += `${commit.abbrev} - ${commit.author} - ${commit.message}\n`
-      markdownLog += `[${commit.abbrev}](${process.env.GITHUB_REPOSITORY}/${process.env.GITHUB_REPOSITORY}/commit/${commit.abbrev}) ${commit.author} - ${commit.message}\n`
+      markdownLog += `[${commit.abbrev}](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/commit/${commit.abbrev}) ${commit.author} - ${commit.message}\n`
     }
 
     core.info(`previousTag: ${previousTag}`)
