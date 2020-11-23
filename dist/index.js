@@ -68,6 +68,8 @@ function run() {
             core.info(`previousTag: ${previousTag}`);
             core.info(`latestTag: ${latestTag}`);
             core.info(textLog);
+            core.setOutput('previousTag', previousTag);
+            core.setOutput('latestTag', latestTag);
             core.setOutput('log', textLog);
             core.setOutput('markdownLog', markdownLog);
         }
