@@ -2515,27 +2515,32 @@ module.exports.gitInstanceFactory = function gitInstanceFactory (baseDir, option
 /***/ 4966:
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
-const responses = __webpack_require__(5301);
-
 const {GitExecutor} = __webpack_require__(4701);
+
 const {Scheduler} = __webpack_require__(3421);
 const {GitLogger} = __webpack_require__(7178);
 const {adhocExecTask, configurationErrorTask} = __webpack_require__(2815);
-const {NOOP, appendTaskOptions, asArray, filterArray, filterPrimitives, filterString, filterType, folderExists, getTrailingOptions, trailingFunctionArgument, trailingOptionsArgument} = __webpack_require__(847);
+const {NOOP, appendTaskOptions, asArray, filterArray, filterPrimitives, filterString, filterStringOrStringArray, filterType, folderExists, getTrailingOptions, trailingFunctionArgument, trailingOptionsArgument} = __webpack_require__(847);
+const {applyPatchTask} = __webpack_require__(4931)
 const {branchTask, branchLocalTask, deleteBranchesTask, deleteBranchTask} = __webpack_require__(17);
 const {taskCallback} = __webpack_require__(8850);
 const {checkIsRepoTask} = __webpack_require__(221);
 const {cloneTask, cloneMirrorTask} = __webpack_require__(3173);
 const {addConfigTask, listConfigTask} = __webpack_require__(7597);
 const {cleanWithOptionsTask, isCleanOptionsArray} = __webpack_require__(4386);
-const {initTask} = __webpack_require__(6016);
+const {commitTask} = __webpack_require__(5494);
+const {diffSummaryTask} = __webpack_require__(9241);
+const {fetchTask} = __webpack_require__(8823);
 const {hashObjectTask} = __webpack_require__(8199);
+const {initTask} = __webpack_require__(6016);
+const {logTask, parseLogOptions} = __webpack_require__(8627);
 const {mergeTask} = __webpack_require__(8829);
 const {moveTask} = __webpack_require__(6520);
 const {pullTask} = __webpack_require__(4636);
 const {pushTagsTask, pushTask} = __webpack_require__(1435);
 const {addRemoteTask, getRemotesTask, listRemotesTask, remoteTask, removeRemoteTask} = __webpack_require__(9866);
 const {getResetMode, resetTask} = __webpack_require__(2377);
+const {stashListTask} = __webpack_require__(810);
 const {statusTask} = __webpack_require__(9197);
 const {addSubModuleTask, initSubModuleTask, subModuleTask, updateSubModuleTask} = __webpack_require__(8772);
 const {addAnnotatedTagTask, addTagTask, tagListTask} = __webpack_require__(8540);
@@ -2606,7 +2611,7 @@ Git.prototype.env = function (name, value) {
 /**
  * Sets the working directory of the subsequent commands.
  */
-Git.prototype.cwd = function (workingDirectory, then) {
+Git.prototype.cwd = function (workingDirectory) {
    const task = (typeof workingDirectory !== 'string')
       ? configurationErrorTask('Git.cwd: workingDirectory must be supplied as a string')
       : adhocExecTask(() => {
@@ -2666,26 +2671,15 @@ Git.prototype.status = function () {
 
 /**
  * List the stash(s) of the local repo
- *
- * @param {Object|Array} [options]
- * @param {Function} [then]
  */
-Git.prototype.stashList = function (options, then) {
-   var handler = trailingFunctionArgument(arguments);
-   var opt = (handler === then ? options : null) || {};
-
-   var splitter = opt.splitter || requireResponseHandler('ListLogSummary').SPLITTER;
-   var command = ["stash", "list", "--pretty=format:"
-   + requireResponseHandler('ListLogSummary').START_BOUNDARY
-   + "%H %ai %s%d %aN %ae".replace(/\s+/g, splitter)
-   + requireResponseHandler('ListLogSummary').COMMIT_BOUNDARY
-   ];
-
-   if (Array.isArray(opt)) {
-      command = command.concat(opt);
-   }
-
-   return this._run(command, handler, {parser: Git.responseParser('ListLogSummary', splitter)});
+Git.prototype.stashList = function (options) {
+   return this._runTask(
+      stashListTask(
+         trailingOptionsArgument(arguments) || {},
+         filterArray(options) && options || []
+      ),
+      trailingFunctionArgument(arguments),
+   );
 };
 
 /**
@@ -2695,9 +2689,9 @@ Git.prototype.stashList = function (options, then) {
  * @param {Function} [then]
  */
 Git.prototype.stash = function (options, then) {
-   return this._run(
-      ['stash'].concat(getTrailingOptions(arguments)),
-      trailingFunctionArgument(arguments)
+   return this._runTask(
+      straightThroughStringTask(['stash', ...getTrailingOptions(arguments)]),
+      trailingFunctionArgument(arguments),
    );
 };
 
@@ -2776,32 +2770,28 @@ Git.prototype.add = function (files) {
  * @param {Function} [then]
  */
 Git.prototype.commit = function (message, files, options, then) {
-   var command = ['commit'];
+   const next = trailingFunctionArgument(arguments);
+   const messages = [];
 
-   asArray(message).forEach(function (message) {
-      command.push('-m', message);
-   });
+   if (filterStringOrStringArray(message)) {
+      messages.push(...asArray(message));
+   }
+   else {
+      console.warn('simple-git deprecation notice: git.commit: requires the commit message to be supplied as a string/string[], this will be an error in version 3');
+   }
 
-   asArray(typeof files === "string" || Array.isArray(files) ? files : []).forEach(cmd => command.push(cmd));
-
-   command.push(...getTrailingOptions(arguments, 0, true));
-
-   return this._run(
-      command,
-      trailingFunctionArgument(arguments),
-      {
-         parser: Git.responseParser('CommitSummary'),
-      },
+   return this._runTask(
+      commitTask(
+         messages,
+         asArray(filterType(files, filterStringOrStringArray, [])),
+         [...filterType(options, filterArray, []), ...getTrailingOptions(arguments, 0, true)]
+      ),
+      next
    );
 };
 
 /**
  * Pull the updated contents of the current repo
- *
- * @param {string} [remote] When supplied must also include the branch
- * @param {string} [branch] When supplied must also include the remote
- * @param {Object} [options] Optionally include set of options to merge into the command
- * @param {Function} [then]
  */
 Git.prototype.pull = function (remote, branch, options, then) {
    return this._runTask(
@@ -2819,22 +2809,11 @@ Git.prototype.pull = function (remote, branch, options, then) {
  *
  * @param {string} [remote]
  * @param {string} [branch]
- * @param {Function} [then]
  */
-Git.prototype.fetch = function (remote, branch, then) {
-   const command = ["fetch"].concat(getTrailingOptions(arguments));
-
-   if (typeof remote === 'string' && typeof branch === 'string') {
-      command.push(remote, branch);
-   }
-
-   return this._run(
-      command,
+Git.prototype.fetch = function (remote, branch) {
+   return this._runTask(
+      fetchTask(filterType(remote, filterString), filterType(branch, filterString), getTrailingOptions(arguments)),
       trailingFunctionArgument(arguments),
-      {
-         concatStdErr: true,
-         parser: Git.responseParser('FetchSummary'),
-      }
    );
 };
 
@@ -2869,12 +2848,8 @@ Git.prototype.tags = function (options, then) {
 /**
  * Rebases the current working copy. Options can be supplied either as an array of string parameters
  * to be sent to the `git rebase` command, or a standard options object.
- *
- * @param {Object|String[]} [options]
- * @param {Function} [then]
- * @returns {Git}
  */
-Git.prototype.rebase = function (options, then) {
+Git.prototype.rebase = function () {
    return this._run(
       ['rebase'].concat(getTrailingOptions(arguments)),
       trailingFunctionArgument(arguments)
@@ -2897,12 +2872,8 @@ Git.prototype.reset = function (mode, then) {
 
 /**
  * Revert one or more commits in the local working copy
- *
- * @param {string} commit The commit to revert. Can be any hash, offset (eg: `HEAD~2`) or range (eg: `master~5..master~2`)
- * @param {Object} [options] Optional options object
- * @param {Function} [then]
  */
-Git.prototype.revert = function (commit, options, then) {
+Git.prototype.revert = function (commit) {
    const next = trailingFunctionArgument(arguments);
 
    if (typeof commit !== 'string') {
@@ -3169,8 +3140,6 @@ Git.prototype.remote = function (options, then) {
  *
  * @param {string} from
  * @param {string} to
- * @param {string[]} [options]
- * @param {Function} [then]
  */
 Git.prototype.mergeFromTo = function (from, to) {
    if (!(filterString(from) && filterString(to))) {
@@ -3236,10 +3205,6 @@ Git.prototype.updateServerInfo = function (then) {
 /**
  * Pushes the current committed changes to a remote, optionally specify the names of the remote and branch to use
  * when pushing. Supply multiple options as an array of strings in the first argument - see examples below.
- *
- * @param {string|string[]} [remote]
- * @param {string} [branch]
- * @param {Function} [then]
  */
 Git.prototype.push = function (remote, branch, then) {
    const task = pushTask(
@@ -3327,9 +3292,6 @@ Git.prototype._catFile = function (format, args) {
    });
 };
 
-/**
- * Return repository changes.
- */
 Git.prototype.diff = function (options, then) {
    const command = ['diff', ...getTrailingOptions(arguments)];
 
@@ -3345,16 +3307,24 @@ Git.prototype.diff = function (options, then) {
 };
 
 Git.prototype.diffSummary = function () {
-   return this._run(
-      ['diff', '--stat=4096', ...getTrailingOptions(arguments, true)],
+   return this._runTask(
+      diffSummaryTask(getTrailingOptions(arguments, 1)),
       trailingFunctionArgument(arguments),
-      {
-         parser: Git.responseParser('DiffSummary'),
-      }
    );
 };
 
-Git.prototype.revparse = function (options, then) {
+Git.prototype.applyPatch = function(patches) {
+   const task = !filterStringOrStringArray(patches)
+      ? configurationErrorTask(`git.applyPatch requires one or more string patches as the first argument`)
+      : applyPatchTask(asArray(patches), getTrailingOptions([].slice.call(arguments, 1)));
+
+   return this._runTask(
+      task,
+      trailingFunctionArgument(arguments),
+   );
+}
+
+Git.prototype.revparse = function () {
    const commands = ['rev-parse', ...getTrailingOptions(arguments, true)];
    return this._runTask(
       straightThroughStringTask(commands, true),
@@ -3369,16 +3339,10 @@ Git.prototype.revparse = function (options, then) {
  * @param {Function} [then]
  */
 Git.prototype.show = function (options, then) {
-   var handler = trailingFunctionArgument(arguments) || NOOP;
-
-   var command = ['show'];
-   if (typeof options === 'string' || Array.isArray(options)) {
-      command = command.concat(options);
-   }
-
-   return this._run(command, function (err, data) {
-      err ? handler(err) : handler(null, data);
-   });
+   return this._runTask(
+      straightThroughStringTask(['show', ...getTrailingOptions(arguments, 1)]),
+      trailingFunctionArgument(arguments)
+   );
 };
 
 /**
@@ -3422,79 +3386,26 @@ Git.prototype.exec = function (then) {
  *
  * Options can also be supplied as a standard options object for adding custom properties supported by the git log command.
  * For any other set of options, supply options as an array of strings to be appended to the git log command.
- *
- * @param {Object|string[]} [options]
- * @param {boolean} [options.strictDate=true] Determine whether to use strict ISO date format (default) or not (when set to `false`)
- * @param {string} [options.from] The first commit to include
- * @param {string} [options.to] The most recent commit to include
- * @param {string} [options.file] A single file to include in the result
- * @param {boolean} [options.multiLine] Optionally include multi-line commit messages
- *
- * @param {Function} [then]
  */
-Git.prototype.log = function (options, then) {
-   var handler = trailingFunctionArgument(arguments);
-   var opt = trailingOptionsArgument(arguments) || {};
+Git.prototype.log = function (options) {
+   const next = trailingFunctionArgument(arguments);
 
-   var splitter = opt.splitter || requireResponseHandler('ListLogSummary').SPLITTER;
-   var format = opt.format || {
-      hash: '%H',
-      date: opt.strictDate === false ? '%ai' : '%aI',
-      message: '%s',
-      refs: '%D',
-      body: opt.multiLine ? '%B' : '%b',
-      author_name: '%aN',
-      author_email: '%ae'
-   };
-   var rangeOperator = (opt.symmetric !== false) ? '...' : '..';
-
-   var fields = Object.keys(format);
-   var formatstr = fields.map(function (k) {
-      return format[k];
-   }).join(splitter);
-   var suffix = [];
-   var command = ["log", "--pretty=format:"
-   + requireResponseHandler('ListLogSummary').START_BOUNDARY
-   + formatstr
-   + requireResponseHandler('ListLogSummary').COMMIT_BOUNDARY
-   ];
-
-   if (filterArray(options)) {
-      command = command.concat(options);
-      opt = {};
-   } else if (typeof arguments[0] === "string" || typeof arguments[1] === "string") {
-      this._logger.warn('Git#log: supplying to or from as strings is now deprecated, switch to an options configuration object');
-      opt = {
-         from: arguments[0],
-         to: arguments[1]
-      };
+   if (filterString(arguments[0]) && filterString(arguments[1])) {
+      return this._runTask(
+         configurationErrorTask(`git.log(string, string) should be replaced with git.log({ from: string, to: string })`),
+         next
+      );
    }
 
-   if (opt.n || opt['max-count']) {
-      command.push("--max-count=" + (opt.n || opt['max-count']));
-   }
-
-   if (opt.from && opt.to) {
-      command.push(opt.from + rangeOperator + opt.to);
-   }
-
-   if (opt.file) {
-      suffix.push("--follow", options.file);
-   }
-
-   'splitter n max-count file from to --pretty format symmetric multiLine strictDate'.split(' ').forEach(function (key) {
-      delete opt[key];
-   });
-
-   appendTaskOptions(opt, command);
-
-   return this._run(
-      command.concat(suffix),
-      handler,
-      {
-         parser: Git.responseParser('ListLogSummary', [splitter, fields])
-      }
+   const parsedOptions = parseLogOptions(
+      trailingOptionsArgument(arguments) || {},
+      filterArray(options) && options || []
    );
+
+   return this._runTask(
+      logTask(parsedOptions.splitter, parsedOptions.fields, parsedOptions.commands),
+      next,
+   )
 };
 
 /**
@@ -3515,16 +3426,13 @@ Git.prototype.clearQueue = function () {
  * @param {Function} [then]
  */
 Git.prototype.checkIgnore = function (pathnames, then) {
-   var handler = trailingFunctionArgument(arguments);
-   var command = ["check-ignore"];
-
-   if (handler !== pathnames) {
-      command = command.concat(pathnames);
-   }
-
-   return this._run(command, function (err, data) {
-      handler && handler(err, !err && parseCheckIgnore(data));
-   });
+   return this._run(
+      ["check-ignore", ...asArray((filterType(pathnames, filterStringOrStringArray, [])))],
+      trailingFunctionArgument(arguments),
+      {
+         parser: parseCheckIgnore
+      }
+   )
 };
 
 Git.prototype.checkIsRepo = function (checkType, then) {
@@ -3591,59 +3499,7 @@ Git.prototype._runTask = function (task, then) {
    });
 };
 
-/**
- * Handles an exception in the processing of a command.
- */
-Git.fail = function (git, error, handler) {
-   git._logger.error(error);
-
-   git.clearQueue();
-
-   if (typeof handler === 'function') {
-      handler.call(git, error, null);
-   }
-};
-
-/**
- * Creates a parser for a task
- *
- * @param {string} type
- * @param {any[]} [args]
- */
-Git.responseParser = function (type, args) {
-   const handler = requireResponseHandler(type);
-   return function (data) {
-      return handler.parse.apply(handler, [data].concat(args === undefined ? [] : args));
-   };
-};
-
-/**
- * Marks the git instance as having had a fatal exception by clearing the pending queue of tasks and
- * logging to the console.
- *
- * @param git
- * @param error
- * @param callback
- */
-Git.exception = function (git, error, callback) {
-   const err = error instanceof Error ? error : new Error(error);
-
-   if (typeof callback === 'function') {
-      callback(err);
-   }
-
-   throw err;
-};
-
 module.exports = Git;
-
-/**
- * Requires and returns a response handler based on its named type
- * @param {string} type
- */
-function requireResponseHandler (type) {
-   return responses[type];
-}
 
 
 /***/ }),
@@ -3668,20 +3524,21 @@ module.exports = esModuleFactory(
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TaskConfigurationError = exports.GitResponseError = exports.GitError = exports.GitConstructError = exports.ResetMode = exports.CheckRepoActions = exports.CleanOptions = void 0;
 var clean_1 = __webpack_require__(4386);
-exports.CleanOptions = clean_1.CleanOptions;
+Object.defineProperty(exports, "CleanOptions", ({ enumerable: true, get: function () { return clean_1.CleanOptions; } }));
 var check_is_repo_1 = __webpack_require__(221);
-exports.CheckRepoActions = check_is_repo_1.CheckRepoActions;
+Object.defineProperty(exports, "CheckRepoActions", ({ enumerable: true, get: function () { return check_is_repo_1.CheckRepoActions; } }));
 var reset_1 = __webpack_require__(2377);
-exports.ResetMode = reset_1.ResetMode;
+Object.defineProperty(exports, "ResetMode", ({ enumerable: true, get: function () { return reset_1.ResetMode; } }));
 var git_construct_error_1 = __webpack_require__(1876);
-exports.GitConstructError = git_construct_error_1.GitConstructError;
+Object.defineProperty(exports, "GitConstructError", ({ enumerable: true, get: function () { return git_construct_error_1.GitConstructError; } }));
 var git_error_1 = __webpack_require__(5757);
-exports.GitError = git_error_1.GitError;
+Object.defineProperty(exports, "GitError", ({ enumerable: true, get: function () { return git_error_1.GitError; } }));
 var git_response_error_1 = __webpack_require__(5131);
-exports.GitResponseError = git_response_error_1.GitResponseError;
+Object.defineProperty(exports, "GitResponseError", ({ enumerable: true, get: function () { return git_response_error_1.GitResponseError; } }));
 var task_configuration_error_1 = __webpack_require__(740);
-exports.TaskConfigurationError = task_configuration_error_1.TaskConfigurationError;
+Object.defineProperty(exports, "TaskConfigurationError", ({ enumerable: true, get: function () { return task_configuration_error_1.TaskConfigurationError; } }));
 //# sourceMappingURL=api.js.map
 
 /***/ }),
@@ -3692,6 +3549,7 @@ exports.TaskConfigurationError = task_configuration_error_1.TaskConfigurationErr
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitConstructError = void 0;
 const git_error_1 = __webpack_require__(5757);
 /**
  * The `GitConstructError` is thrown when an error occurs in the constructor
@@ -3719,6 +3577,7 @@ exports.GitConstructError = GitConstructError;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitError = void 0;
 /**
  * The `GitError` is thrown when the underlying `git` process throws a
  * fatal exception (eg an `ENOENT` exception when attempting to use a
@@ -3762,6 +3621,7 @@ exports.GitError = GitError;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitResponseError = void 0;
 const git_error_1 = __webpack_require__(5757);
 /**
  * The `GitResponseError` is the wrapper for a parsed response that is treated as
@@ -3804,6 +3664,7 @@ exports.GitResponseError = GitResponseError;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TaskConfigurationError = void 0;
 const git_error_1 = __webpack_require__(5757);
 /**
  * The `TaskConfigurationError` is thrown when a command was incorrectly
@@ -3829,6 +3690,7 @@ exports.TaskConfigurationError = TaskConfigurationError;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitLogger = exports.createLogger = exports.log = void 0;
 const debug_1 = __webpack_require__(2179);
 const utils_1 = __webpack_require__(847);
 debug_1.default.formatters.L = (value) => String(utils_1.filterHasLength(value) ? value.length : '-');
@@ -3948,6 +3810,7 @@ exports.GitLogger = GitLogger;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.hasBranchDeletionError = exports.parseBranchDeletions = void 0;
 const BranchDeleteSummary_1 = __webpack_require__(3755);
 const utils_1 = __webpack_require__(847);
 const deleteSuccessRegex = /(\S+)\s+\(\S+\s([^)]+)\)/;
@@ -3965,9 +3828,10 @@ const parsers = [
         result.branches[branch] = deletion;
     }),
 ];
-exports.parseBranchDeletions = (stdOut) => {
+const parseBranchDeletions = (stdOut) => {
     return utils_1.parseStringResponse(new BranchDeleteSummary_1.BranchDeletionBatch(), parsers, stdOut);
 };
+exports.parseBranchDeletions = parseBranchDeletions;
 function hasBranchDeletionError(data, processExitCode) {
     return processExitCode === utils_1.ExitCodes.ERROR && deleteErrorRegex.test(data);
 }
@@ -3982,6 +3846,7 @@ exports.hasBranchDeletionError = hasBranchDeletionError;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseBranchSummary = void 0;
 const BranchSummary_1 = __webpack_require__(4446);
 const utils_1 = __webpack_require__(847);
 const parsers = [
@@ -3992,10 +3857,233 @@ const parsers = [
         result.push(!!current, false, name, commit, label);
     })
 ];
-exports.parseBranchSummary = function (stdOut) {
+function parseBranchSummary(stdOut) {
     return utils_1.parseStringResponse(new BranchSummary_1.BranchSummaryResult(), parsers, stdOut);
-};
+}
+exports.parseBranchSummary = parseBranchSummary;
 //# sourceMappingURL=parse-branch.js.map
+
+/***/ }),
+
+/***/ 3026:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseCommitResult = void 0;
+const utils_1 = __webpack_require__(847);
+const parsers = [
+    new utils_1.LineParser(/\[([^\s]+)( \([^)]+\))? ([^\]]+)/, (result, [branch, root, commit]) => {
+        result.branch = branch;
+        result.commit = commit;
+        result.root = !!root;
+    }),
+    new utils_1.LineParser(/\s*Author:\s(.+)/i, (result, [author]) => {
+        const parts = author.split('<');
+        const email = parts.pop();
+        if (!email || !email.includes('@')) {
+            return;
+        }
+        result.author = {
+            email: email.substr(0, email.length - 1),
+            name: parts.join('<').trim()
+        };
+    }),
+    new utils_1.LineParser(/(\d+)[^,]*(?:,\s*(\d+)[^,]*)(?:,\s*(\d+))/g, (result, [changes, insertions, deletions]) => {
+        result.summary.changes = parseInt(changes, 10) || 0;
+        result.summary.insertions = parseInt(insertions, 10) || 0;
+        result.summary.deletions = parseInt(deletions, 10) || 0;
+    }),
+    new utils_1.LineParser(/^(\d+)[^,]*(?:,\s*(\d+)[^(]+\(([+-]))?/, (result, [changes, lines, direction]) => {
+        result.summary.changes = parseInt(changes, 10) || 0;
+        const count = parseInt(lines, 10) || 0;
+        if (direction === '-') {
+            result.summary.deletions = count;
+        }
+        else if (direction === '+') {
+            result.summary.insertions = count;
+        }
+    }),
+];
+function parseCommitResult(stdOut) {
+    const result = {
+        author: null,
+        branch: '',
+        commit: '',
+        root: false,
+        summary: {
+            changes: 0,
+            insertions: 0,
+            deletions: 0,
+        },
+    };
+    return utils_1.parseStringResponse(result, parsers, stdOut);
+}
+exports.parseCommitResult = parseCommitResult;
+//# sourceMappingURL=parse-commit.js.map
+
+/***/ }),
+
+/***/ 2024:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseDiffResult = void 0;
+const DiffSummary_1 = __webpack_require__(4781);
+function parseDiffResult(stdOut) {
+    const lines = stdOut.trim().split('\n');
+    const status = new DiffSummary_1.DiffSummary();
+    readSummaryLine(status, lines.pop());
+    for (let i = 0, max = lines.length; i < max; i++) {
+        const line = lines[i];
+        textFileChange(line, status) || binaryFileChange(line, status);
+    }
+    return status;
+}
+exports.parseDiffResult = parseDiffResult;
+function readSummaryLine(status, summary) {
+    (summary || '')
+        .trim()
+        .split(', ')
+        .forEach(function (text) {
+        const summary = /(\d+)\s([a-z]+)/.exec(text);
+        if (!summary) {
+            return;
+        }
+        summaryType(status, summary[2], parseInt(summary[1], 10));
+    });
+}
+function summaryType(status, key, value) {
+    const match = (/([a-z]+?)s?\b/.exec(key));
+    if (!match || !statusUpdate[match[1]]) {
+        return;
+    }
+    statusUpdate[match[1]](status, value);
+}
+const statusUpdate = {
+    file(status, value) {
+        status.changed = value;
+    },
+    deletion(status, value) {
+        status.deletions = value;
+    },
+    insertion(status, value) {
+        status.insertions = value;
+    }
+};
+function textFileChange(input, { files }) {
+    const line = input.trim().match(/^(.+)\s+\|\s+(\d+)(\s+[+\-]+)?$/);
+    if (line) {
+        var alterations = (line[3] || '').trim();
+        files.push({
+            file: line[1].trim(),
+            changes: parseInt(line[2], 10),
+            insertions: alterations.replace(/-/g, '').length,
+            deletions: alterations.replace(/\+/g, '').length,
+            binary: false
+        });
+        return true;
+    }
+    return false;
+}
+function binaryFileChange(input, { files }) {
+    const line = input.match(/^(.+) \|\s+Bin ([0-9.]+) -> ([0-9.]+) ([a-z]+)$/);
+    if (line) {
+        files.push({
+            file: line[1].trim(),
+            before: +line[2],
+            after: +line[3],
+            binary: true
+        });
+        return true;
+    }
+    return false;
+}
+//# sourceMappingURL=parse-diff-summary.js.map
+
+/***/ }),
+
+/***/ 6254:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseFetchResult = void 0;
+const utils_1 = __webpack_require__(847);
+const parsers = [
+    new utils_1.LineParser(/From (.+)$/, (result, [remote]) => {
+        result.remote = remote;
+    }),
+    new utils_1.LineParser(/\* \[new branch]\s+(\S+)\s*-> (.+)$/, (result, [name, tracking]) => {
+        result.branches.push({
+            name,
+            tracking,
+        });
+    }),
+    new utils_1.LineParser(/\* \[new tag]\s+(\S+)\s*-> (.+)$/, (result, [name, tracking]) => {
+        result.tags.push({
+            name,
+            tracking,
+        });
+    })
+];
+function parseFetchResult(stdOut, stdErr) {
+    const result = {
+        raw: stdOut,
+        remote: null,
+        branches: [],
+        tags: [],
+    };
+    return utils_1.parseStringResponse(result, parsers, stdOut, stdErr);
+}
+exports.parseFetchResult = parseFetchResult;
+//# sourceMappingURL=parse-fetch.js.map
+
+/***/ }),
+
+/***/ 9729:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createListLogSummaryParser = exports.SPLITTER = exports.COMMIT_BOUNDARY = exports.START_BOUNDARY = void 0;
+const utils_1 = __webpack_require__(847);
+const parse_diff_summary_1 = __webpack_require__(2024);
+exports.START_BOUNDARY = 'òòòòòò ';
+exports.COMMIT_BOUNDARY = ' òò';
+exports.SPLITTER = ' ò ';
+const defaultFieldNames = ['hash', 'date', 'message', 'refs', 'author_name', 'author_email'];
+function lineBuilder(tokens, fields) {
+    return fields.reduce((line, field, index) => {
+        line[field] = tokens[index] || '';
+        return line;
+    }, Object.create({ diff: null }));
+}
+function createListLogSummaryParser(splitter = exports.SPLITTER, fields = defaultFieldNames) {
+    return function (stdOut) {
+        const all = utils_1.toLinesWithContent(stdOut, true, exports.START_BOUNDARY)
+            .map(function (item) {
+            const lineDetail = item.trim().split(exports.COMMIT_BOUNDARY);
+            const listLogLine = lineBuilder(lineDetail[0].trim().split(splitter), fields);
+            if (lineDetail.length > 1 && !!lineDetail[1].trim()) {
+                listLogLine.diff = parse_diff_summary_1.parseDiffResult(lineDetail[1]);
+            }
+            return listLogLine;
+        });
+        return {
+            all,
+            latest: all.length && all[0] || null,
+            total: all.length,
+        };
+    };
+}
+exports.createListLogSummaryParser = createListLogSummaryParser;
+//# sourceMappingURL=parse-list-log-summary.js.map
 
 /***/ }),
 
@@ -4005,6 +4093,7 @@ exports.parseBranchSummary = function (stdOut) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseMergeDetail = exports.parseMergeResult = void 0;
 const MergeSummary_1 = __webpack_require__(1651);
 const utils_1 = __webpack_require__(847);
 const parse_pull_1 = __webpack_require__(5658);
@@ -4028,16 +4117,18 @@ const parsers = [
 /**
  * Parse the complete response from `git.merge`
  */
-exports.parseMergeResult = (stdOut, stdErr) => {
+const parseMergeResult = (stdOut, stdErr) => {
     return Object.assign(exports.parseMergeDetail(stdOut, stdErr), parse_pull_1.parsePullResult(stdOut, stdErr));
 };
+exports.parseMergeResult = parseMergeResult;
 /**
  * Parse the merge specific detail (ie: not the content also available in the pull detail) from `git.mnerge`
  * @param stdOut
  */
-exports.parseMergeDetail = (stdOut) => {
+const parseMergeDetail = (stdOut) => {
     return utils_1.parseStringResponse(new MergeSummary_1.MergeSummaryDetail(), parsers, stdOut);
 };
+exports.parseMergeDetail = parseMergeDetail;
 //# sourceMappingURL=parse-merge.js.map
 
 /***/ }),
@@ -4048,15 +4139,17 @@ exports.parseMergeDetail = (stdOut) => {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseMoveResult = void 0;
 const utils_1 = __webpack_require__(847);
 const parsers = [
     new utils_1.LineParser(/^Renaming (.+) to (.+)$/, (result, [from, to]) => {
         result.moves.push({ from, to });
     }),
 ];
-exports.parseMoveResult = function (stdOut) {
+function parseMoveResult(stdOut) {
     return utils_1.parseStringResponse({ moves: [] }, parsers, stdOut);
-};
+}
+exports.parseMoveResult = parseMoveResult;
 //# sourceMappingURL=parse-move.js.map
 
 /***/ }),
@@ -4067,6 +4160,7 @@ exports.parseMoveResult = function (stdOut) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parsePullResult = exports.parsePullDetail = void 0;
 const PullSummary_1 = __webpack_require__(3567);
 const utils_1 = __webpack_require__(847);
 const parse_remote_messages_1 = __webpack_require__(2661);
@@ -4097,12 +4191,14 @@ const parsers = [
         utils_1.append((action === 'create') ? result.created : result.deleted, file);
     }),
 ];
-exports.parsePullDetail = (stdOut, stdErr) => {
-    return utils_1.parseStringResponse(new PullSummary_1.PullSummary(), parsers, `${stdOut}\n${stdErr}`);
+const parsePullDetail = (stdOut, stdErr) => {
+    return utils_1.parseStringResponse(new PullSummary_1.PullSummary(), parsers, stdOut, stdErr);
 };
-exports.parsePullResult = (stdOut, stdErr) => {
+exports.parsePullDetail = parsePullDetail;
+const parsePullResult = (stdOut, stdErr) => {
     return Object.assign(new PullSummary_1.PullSummary(), exports.parsePullDetail(stdOut, stdErr), parse_remote_messages_1.parseRemoteMessages(stdOut, stdErr));
 };
+exports.parsePullResult = parsePullResult;
 //# sourceMappingURL=parse-pull.js.map
 
 /***/ }),
@@ -4113,6 +4209,7 @@ exports.parsePullResult = (stdOut, stdErr) => {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parsePushDetail = exports.parsePushResult = void 0;
 const utils_1 = __webpack_require__(847);
 const parse_remote_messages_1 = __webpack_require__(2661);
 function pushResultPushedItem(local, remote, status) {
@@ -4157,14 +4254,16 @@ const parsers = [
         };
     }),
 ];
-exports.parsePushResult = (stdOut, stdErr) => {
+const parsePushResult = (stdOut, stdErr) => {
     const pushDetail = exports.parsePushDetail(stdOut, stdErr);
     const responseDetail = parse_remote_messages_1.parseRemoteMessages(stdOut, stdErr);
     return Object.assign(Object.assign({}, pushDetail), responseDetail);
 };
-exports.parsePushDetail = (stdOut, stdErr) => {
-    return utils_1.parseStringResponse({ pushed: [] }, parsers, `${stdOut}\n${stdErr}`);
+exports.parsePushResult = parsePushResult;
+const parsePushDetail = (stdOut, stdErr) => {
+    return utils_1.parseStringResponse({ pushed: [] }, parsers, stdOut, stdErr);
 };
+exports.parsePushDetail = parsePushDetail;
 //# sourceMappingURL=parse-push.js.map
 
 /***/ }),
@@ -4175,6 +4274,7 @@ exports.parsePushDetail = (stdOut, stdErr) => {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RemoteMessageSummary = exports.parseRemoteMessages = void 0;
 const utils_1 = __webpack_require__(847);
 const parse_remote_objects_1 = __webpack_require__(3565);
 const parsers = [
@@ -4214,6 +4314,7 @@ exports.RemoteMessageSummary = RemoteMessageSummary;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.remoteMessagesObjectParsers = void 0;
 const utils_1 = __webpack_require__(847);
 function objectEnumerationResult(remoteMessages) {
     return (remoteMessages.objects = remoteMessages.objects || {
@@ -4261,6 +4362,7 @@ exports.remoteMessagesObjectParsers = [
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isSingleBranchDeleteFailure = exports.branchDeletionFailure = exports.branchDeletionSuccess = exports.BranchDeletionBatch = void 0;
 class BranchDeletionBatch {
     constructor() {
         this.all = [];
@@ -4298,6 +4400,7 @@ exports.isSingleBranchDeleteFailure = isSingleBranchDeleteFailure;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BranchSummaryResult = void 0;
 class BranchSummaryResult {
     constructor() {
         this.all = [];
@@ -4330,14 +4433,16 @@ exports.BranchSummaryResult = BranchSummaryResult;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseCheckIgnore = void 0;
 /**
  * Parser for the `check-ignore` command - returns each file as a string array
  */
-exports.parseCheckIgnore = (text) => {
+const parseCheckIgnore = (text) => {
     return text.split(/\n/g)
         .map(line => line.trim())
         .filter(file => !!file);
 };
+exports.parseCheckIgnore = parseCheckIgnore;
 //# sourceMappingURL=CheckIgnore.js.map
 
 /***/ }),
@@ -4348,6 +4453,7 @@ exports.parseCheckIgnore = (text) => {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.cleanSummaryParser = exports.CleanResponse = void 0;
 const utils_1 = __webpack_require__(847);
 class CleanResponse {
     constructor(dryRun) {
@@ -4382,6 +4488,7 @@ exports.cleanSummaryParser = cleanSummaryParser;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.configListParser = exports.ConfigList = void 0;
 const utils_1 = __webpack_require__(847);
 class ConfigList {
     constructor() {
@@ -4437,12 +4544,36 @@ function configFilePath(filePath) {
 
 /***/ }),
 
+/***/ 4781:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DiffSummary = void 0;
+/***
+ * The DiffSummary is returned as a response to getting `git().status()`
+ */
+class DiffSummary {
+    constructor() {
+        this.changed = 0;
+        this.deletions = 0;
+        this.insertions = 0;
+        this.files = [];
+    }
+}
+exports.DiffSummary = DiffSummary;
+//# sourceMappingURL=DiffSummary.js.map
+
+/***/ }),
+
 /***/ 860:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FileStatusSummary = exports.fromPathRegex = void 0;
 exports.fromPathRegex = /^(.+) -> (.+)$/;
 class FileStatusSummary {
     constructor(path, index, working_dir) {
@@ -4467,6 +4598,7 @@ exports.FileStatusSummary = FileStatusSummary;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseGetRemotesVerbose = exports.parseGetRemotes = void 0;
 const utils_1 = __webpack_require__(847);
 function parseGetRemotes(text) {
     const remotes = {};
@@ -4503,6 +4635,7 @@ function forEach(text, handler) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseInit = exports.InitSummary = void 0;
 class InitSummary {
     constructor(bare, path, existing, gitDir) {
         this.bare = bare;
@@ -4545,6 +4678,7 @@ exports.parseInit = parseInit;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MergeSummaryDetail = exports.MergeSummaryConflict = void 0;
 class MergeSummaryConflict {
     constructor(reason, file = null, meta) {
         this.reason = reason;
@@ -4586,6 +4720,7 @@ exports.MergeSummaryDetail = MergeSummaryDetail;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PullSummary = void 0;
 class PullSummary {
     constructor() {
         this.remoteMessages = {
@@ -4614,6 +4749,8 @@ exports.PullSummary = PullSummary;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseStatusSummary = exports.StatusSummary = void 0;
+const utils_1 = __webpack_require__(847);
 const FileStatusSummary_1 = __webpack_require__(860);
 /**
  * The StatusSummary is returned as a response to getting `git().status()`
@@ -4657,103 +4794,105 @@ class StatusSummary {
     }
 }
 exports.StatusSummary = StatusSummary;
-exports.StatusSummaryParsers = {
-    '##': function (line, status) {
-        const aheadReg = /ahead (\d+)/;
-        const behindReg = /behind (\d+)/;
-        const currentReg = /^(.+?(?=(?:\.{3}|\s|$)))/;
-        const trackingReg = /\.{3}(\S*)/;
-        const onEmptyBranchReg = /\son\s([\S]+)$/;
-        let regexResult;
-        regexResult = aheadReg.exec(line);
-        status.ahead = regexResult && +regexResult[1] || 0;
-        regexResult = behindReg.exec(line);
-        status.behind = regexResult && +regexResult[1] || 0;
-        regexResult = currentReg.exec(line);
-        status.current = regexResult && regexResult[1];
-        regexResult = trackingReg.exec(line);
-        status.tracking = regexResult && regexResult[1];
-        regexResult = onEmptyBranchReg.exec(line);
-        status.current = regexResult && regexResult[1] || status.current;
-    },
-    '??': function (line, status) {
-        status.not_added.push(line);
-    },
-    A: function (line, status) {
-        status.created.push(line);
-    },
-    AM: function (line, status) {
-        status.created.push(line);
-    },
-    D: function (line, status) {
-        status.deleted.push(line);
-    },
-    M: function (line, status, indexState) {
-        status.modified.push(line);
-        if (indexState === 'M') {
-            status.staged.push(line);
-        }
-    },
-    R: function (line, status) {
-        const detail = /^(.+) -> (.+)$/.exec(line) || [null, line, line];
-        status.renamed.push({
-            from: String(detail[1]),
-            to: String(detail[2])
-        });
-    },
-    UU: function (line, status) {
-        status.conflicted.push(line);
+var PorcelainFileStatus;
+(function (PorcelainFileStatus) {
+    PorcelainFileStatus["ADDED"] = "A";
+    PorcelainFileStatus["DELETED"] = "D";
+    PorcelainFileStatus["MODIFIED"] = "M";
+    PorcelainFileStatus["RENAMED"] = "R";
+    PorcelainFileStatus["COPIED"] = "C";
+    PorcelainFileStatus["UNMERGED"] = "U";
+    PorcelainFileStatus["UNTRACKED"] = "?";
+    PorcelainFileStatus["IGNORED"] = "!";
+    PorcelainFileStatus["NONE"] = " ";
+})(PorcelainFileStatus || (PorcelainFileStatus = {}));
+function renamedFile(line) {
+    const detail = /^(.+) -> (.+)$/.exec(line);
+    if (!detail) {
+        return {
+            from: line, to: line
+        };
     }
-};
-exports.StatusSummaryParsers.MM = exports.StatusSummaryParsers.M;
-/* Map all unmerged status code combinations to UU to mark as conflicted */
-exports.StatusSummaryParsers.AA = exports.StatusSummaryParsers.UU;
-exports.StatusSummaryParsers.UD = exports.StatusSummaryParsers.UU;
-exports.StatusSummaryParsers.DU = exports.StatusSummaryParsers.UU;
-exports.StatusSummaryParsers.DD = exports.StatusSummaryParsers.UU;
-exports.StatusSummaryParsers.AU = exports.StatusSummaryParsers.UU;
-exports.StatusSummaryParsers.UA = exports.StatusSummaryParsers.UU;
-exports.parseStatusSummary = function (text) {
-    let file;
+    return {
+        from: String(detail[1]),
+        to: String(detail[2]),
+    };
+}
+function parser(indexX, indexY, handler) {
+    return [`${indexX}${indexY}`, handler];
+}
+function conflicts(indexX, ...indexY) {
+    return indexY.map(y => parser(indexX, y, (result, file) => utils_1.append(result.conflicted, file)));
+}
+const parsers = new Map([
+    parser(PorcelainFileStatus.NONE, PorcelainFileStatus.ADDED, (result, file) => utils_1.append(result.created, file)),
+    parser(PorcelainFileStatus.NONE, PorcelainFileStatus.DELETED, (result, file) => utils_1.append(result.deleted, file)),
+    parser(PorcelainFileStatus.NONE, PorcelainFileStatus.MODIFIED, (result, file) => utils_1.append(result.modified, file)),
+    parser(PorcelainFileStatus.ADDED, PorcelainFileStatus.NONE, (result, file) => utils_1.append(result.created, file) && utils_1.append(result.staged, file)),
+    parser(PorcelainFileStatus.ADDED, PorcelainFileStatus.MODIFIED, (result, file) => utils_1.append(result.created, file) && utils_1.append(result.staged, file) && utils_1.append(result.modified, file)),
+    parser(PorcelainFileStatus.DELETED, PorcelainFileStatus.NONE, (result, file) => utils_1.append(result.deleted, file) && utils_1.append(result.staged, file)),
+    parser(PorcelainFileStatus.MODIFIED, PorcelainFileStatus.NONE, (result, file) => utils_1.append(result.modified, file) && utils_1.append(result.staged, file)),
+    parser(PorcelainFileStatus.MODIFIED, PorcelainFileStatus.MODIFIED, (result, file) => utils_1.append(result.modified, file) && utils_1.append(result.staged, file)),
+    parser(PorcelainFileStatus.RENAMED, PorcelainFileStatus.NONE, (result, file) => {
+        utils_1.append(result.renamed, renamedFile(file));
+    }),
+    parser(PorcelainFileStatus.RENAMED, PorcelainFileStatus.MODIFIED, (result, file) => {
+        const renamed = renamedFile(file);
+        utils_1.append(result.renamed, renamed);
+        utils_1.append(result.modified, renamed.to);
+    }),
+    parser(PorcelainFileStatus.UNTRACKED, PorcelainFileStatus.UNTRACKED, (result, file) => utils_1.append(result.not_added, file)),
+    ...conflicts(PorcelainFileStatus.ADDED, PorcelainFileStatus.ADDED, PorcelainFileStatus.UNMERGED),
+    ...conflicts(PorcelainFileStatus.DELETED, PorcelainFileStatus.DELETED, PorcelainFileStatus.UNMERGED),
+    ...conflicts(PorcelainFileStatus.UNMERGED, PorcelainFileStatus.ADDED, PorcelainFileStatus.DELETED, PorcelainFileStatus.UNMERGED),
+    ['##', (result, line) => {
+            const aheadReg = /ahead (\d+)/;
+            const behindReg = /behind (\d+)/;
+            const currentReg = /^(.+?(?=(?:\.{3}|\s|$)))/;
+            const trackingReg = /\.{3}(\S*)/;
+            const onEmptyBranchReg = /\son\s([\S]+)$/;
+            let regexResult;
+            regexResult = aheadReg.exec(line);
+            result.ahead = regexResult && +regexResult[1] || 0;
+            regexResult = behindReg.exec(line);
+            result.behind = regexResult && +regexResult[1] || 0;
+            regexResult = currentReg.exec(line);
+            result.current = regexResult && regexResult[1];
+            regexResult = trackingReg.exec(line);
+            result.tracking = regexResult && regexResult[1];
+            regexResult = onEmptyBranchReg.exec(line);
+            result.current = regexResult && regexResult[1] || result.current;
+        }]
+]);
+const parseStatusSummary = function (text) {
     const lines = text.trim().split('\n');
     const status = new StatusSummary();
     for (let i = 0, l = lines.length; i < l; i++) {
-        file = splitLine(lines[i]);
-        if (!file) {
-            continue;
-        }
-        if (file.handler) {
-            file.handler(file.path, status, file.index, file.workingDir);
-        }
-        if (file.code !== '##') {
-            status.files.push(new FileStatusSummary_1.FileStatusSummary(file.path, file.index, file.workingDir));
-        }
+        splitLine(status, lines[i]);
     }
     return status;
 };
-function splitLine(lineStr) {
-    let line = lineStr.trim().match(/(..?)(\s+)(.*)/);
-    if (!line || !line[1].trim()) {
-        line = lineStr.trim().match(/(..?)\s+(.*)/);
+exports.parseStatusSummary = parseStatusSummary;
+function splitLine(result, lineStr) {
+    const trimmed = lineStr.trim();
+    switch (' ') {
+        case trimmed.charAt(2):
+            return data(trimmed.charAt(0), trimmed.charAt(1), trimmed.substr(3));
+        case trimmed.charAt(1):
+            return data(PorcelainFileStatus.NONE, trimmed.charAt(0), trimmed.substr(2));
+        default:
+            return;
     }
-    if (!line) {
-        return;
+    function data(index, workingDir, path) {
+        const raw = `${index}${workingDir}`;
+        const handler = parsers.get(raw);
+        if (handler) {
+            handler(result, path);
+        }
+        if (raw !== '##') {
+            result.files.push(new FileStatusSummary_1.FileStatusSummary(path, index, workingDir));
+        }
     }
-    let code = line[1];
-    if (line[2].length > 1) {
-        code += ' ';
-    }
-    if (code.length === 1 && line[2].length === 1) {
-        code = ' ' + code;
-    }
-    return {
-        raw: code,
-        code: code.trim(),
-        index: code.charAt(0),
-        workingDir: code.charAt(1),
-        handler: exports.StatusSummaryParsers[code.trim()],
-        path: line[3]
-    };
 }
 //# sourceMappingURL=StatusSummary.js.map
 
@@ -4765,6 +4904,7 @@ function splitLine(lineStr) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseTagList = exports.TagList = void 0;
 class TagList {
     constructor(all, latest) {
         this.all = all;
@@ -4772,7 +4912,7 @@ class TagList {
     }
 }
 exports.TagList = TagList;
-exports.parseTagList = function (data, customSort = false) {
+const parseTagList = function (data, customSort = false) {
     const tags = data
         .split('\n')
         .map(trimmed)
@@ -4796,6 +4936,7 @@ exports.parseTagList = function (data, customSort = false) {
     const latest = customSort ? tags[0] : [...tags].reverse().find((tag) => tag.indexOf('.') >= 0);
     return new TagList(tags, latest);
 };
+exports.parseTagList = parseTagList;
 function singleSorted(a, b) {
     const aIsNum = isNaN(a);
     const bIsNum = isNaN(b);
@@ -4835,6 +4976,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitExecutorChain = void 0;
 const child_process_1 = __webpack_require__(3129);
 const api_1 = __webpack_require__(4732);
 const task_1 = __webpack_require__(2815);
@@ -5001,6 +5143,7 @@ function onDataReceived(target, name, logger, output) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitExecutor = void 0;
 const git_executor_chain_1 = __webpack_require__(8543);
 class GitExecutor {
     constructor(binary = 'git', cwd, _scheduler) {
@@ -5027,6 +5170,7 @@ exports.GitExecutor = GitExecutor;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.gitP = void 0;
 const git_response_error_1 = __webpack_require__(5131);
 const functionNamesBuilderApi = [
     'customBinary', 'env', 'outputHandler', 'silent',
@@ -5037,6 +5181,7 @@ const functionNamesPromiseApi = [
     'addConfig',
     'addRemote',
     'addTag',
+    'applyPatch',
     'binaryCatFile',
     'branch',
     'branchLocal',
@@ -5165,6 +5310,7 @@ function toError(error) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Scheduler = void 0;
 const utils_1 = __webpack_require__(847);
 const promise_deferred_1 = __webpack_require__(9819);
 const git_logger_1 = __webpack_require__(7178);
@@ -5219,6 +5365,7 @@ exports.Scheduler = Scheduler;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TasksPendingQueue = void 0;
 const git_logger_1 = __webpack_require__(7178);
 const api_1 = __webpack_require__(4732);
 class TasksPendingQueue {
@@ -5290,6 +5437,7 @@ TasksPendingQueue.counter = 0;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.taskCallback = void 0;
 const api_1 = __webpack_require__(4732);
 const utils_1 = __webpack_require__(847);
 function taskCallback(task, response, callback = utils_1.NOOP) {
@@ -5309,7 +5457,7 @@ function taskCallback(task, response, callback = utils_1.NOOP) {
 exports.taskCallback = taskCallback;
 function addDeprecationNoticeToError(err) {
     let log = (name) => {
-        console.warn(`simple-git deprecation notice: accessing GitResponseError.${name} should be GitResponseError.git.${name}`);
+        console.warn(`simple-git deprecation notice: accessing GitResponseError.${name} should be GitResponseError.git.${name}, this will no longer be available in version 3`);
         log = utils_1.NOOP;
     };
     return Object.create(err, Object.getOwnPropertyNames(err.git).reduce(descriptorReducer, {}));
@@ -5332,12 +5480,29 @@ function addDeprecationNoticeToError(err) {
 
 /***/ }),
 
+/***/ 4931:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.applyPatchTask = void 0;
+const task_1 = __webpack_require__(2815);
+function applyPatchTask(patches, customArgs) {
+    return task_1.straightThroughStringTask(['apply', ...customArgs, ...patches]);
+}
+exports.applyPatchTask = applyPatchTask;
+//# sourceMappingURL=apply-patch.js.map
+
+/***/ }),
+
 /***/ 17:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.deleteBranchTask = exports.deleteBranchesTask = exports.branchLocalTask = exports.branchTask = exports.containsDeleteBranchCommand = void 0;
 const git_response_error_1 = __webpack_require__(5131);
 const parse_branch_delete_1 = __webpack_require__(6086);
 const parse_branch_1 = __webpack_require__(9264);
@@ -5362,18 +5527,17 @@ function branchTask(customArgs) {
             if (isDelete) {
                 return parse_branch_delete_1.parseBranchDeletions(stdOut, stdErr).all[0];
             }
-            return parse_branch_1.parseBranchSummary(stdOut, stdErr);
+            return parse_branch_1.parseBranchSummary(stdOut);
         },
     };
 }
 exports.branchTask = branchTask;
 function branchLocalTask() {
+    const parser = parse_branch_1.parseBranchSummary;
     return {
         format: 'utf-8',
         commands: ['branch', '-v'],
-        parser(stdOut, stdErr) {
-            return parse_branch_1.parseBranchSummary(stdOut, stdErr);
-        },
+        parser,
     };
 }
 exports.branchLocalTask = branchLocalTask;
@@ -5422,6 +5586,7 @@ exports.deleteBranchTask = deleteBranchTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.checkIsBareRepoTask = exports.checkIsRepoRootTask = exports.checkIsRepoTask = exports.CheckRepoActions = void 0;
 const utils_1 = __webpack_require__(847);
 var CheckRepoActions;
 (function (CheckRepoActions) {
@@ -5489,6 +5654,7 @@ function isNotRepoMessage(message) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isCleanOptionsArray = exports.cleanTask = exports.cleanWithOptionsTask = exports.CleanOptions = exports.CONFIG_ERROR_UNKNOWN_OPTION = exports.CONFIG_ERROR_MODE_REQUIRED = exports.CONFIG_ERROR_INTERACTIVE_MODE = void 0;
 const CleanSummary_1 = __webpack_require__(5689);
 const utils_1 = __webpack_require__(847);
 const task_1 = __webpack_require__(2815);
@@ -5580,6 +5746,7 @@ function isInteractiveMode(option) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.cloneMirrorTask = exports.cloneTask = void 0;
 const task_1 = __webpack_require__(2815);
 const utils_1 = __webpack_require__(847);
 function cloneTask(repo, directory, customArgs) {
@@ -5602,12 +5769,36 @@ exports.cloneMirrorTask = cloneMirrorTask;
 
 /***/ }),
 
+/***/ 5494:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.commitTask = void 0;
+const parse_commit_1 = __webpack_require__(3026);
+function commitTask(message, files, customArgs) {
+    const commands = ['commit'];
+    message.forEach((m) => commands.push('-m', m));
+    commands.push(...files, ...customArgs);
+    return {
+        commands,
+        format: 'utf-8',
+        parser: parse_commit_1.parseCommitResult,
+    };
+}
+exports.commitTask = commitTask;
+//# sourceMappingURL=commit.js.map
+
+/***/ }),
+
 /***/ 7597:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.listConfigTask = exports.addConfigTask = void 0;
 const ConfigList_1 = __webpack_require__(7219);
 function addConfigTask(key, value, append = false) {
     const commands = ['config', '--local'];
@@ -5638,12 +5829,59 @@ exports.listConfigTask = listConfigTask;
 
 /***/ }),
 
+/***/ 9241:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.diffSummaryTask = void 0;
+const parse_diff_summary_1 = __webpack_require__(2024);
+function diffSummaryTask(customArgs) {
+    return {
+        commands: ['diff', '--stat=4096', ...customArgs],
+        format: 'utf-8',
+        parser(stdOut) {
+            return parse_diff_summary_1.parseDiffResult(stdOut);
+        }
+    };
+}
+exports.diffSummaryTask = diffSummaryTask;
+//# sourceMappingURL=diff.js.map
+
+/***/ }),
+
+/***/ 8823:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.fetchTask = void 0;
+const parse_fetch_1 = __webpack_require__(6254);
+function fetchTask(remote, branch, customArgs) {
+    const commands = ['fetch', ...customArgs];
+    if (remote && branch) {
+        commands.push(remote, branch);
+    }
+    return {
+        commands,
+        format: 'utf-8',
+        parser: parse_fetch_1.parseFetchResult,
+    };
+}
+exports.fetchTask = fetchTask;
+//# sourceMappingURL=fetch.js.map
+
+/***/ }),
+
 /***/ 8199:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.hashObjectTask = void 0;
 const task_1 = __webpack_require__(2815);
 /**
  * Task used by `git.hashObject`
@@ -5666,6 +5904,7 @@ exports.hashObjectTask = hashObjectTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.initTask = void 0;
 const InitSummary_1 = __webpack_require__(8690);
 const bareCommand = '--bare';
 function hasBareCommand(command) {
@@ -5690,12 +5929,108 @@ exports.initTask = initTask;
 
 /***/ }),
 
+/***/ 8627:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logTask = exports.parseLogOptions = void 0;
+const parse_list_log_summary_1 = __webpack_require__(9729);
+const utils_1 = __webpack_require__(847);
+var excludeOptions;
+(function (excludeOptions) {
+    excludeOptions[excludeOptions["--pretty"] = 0] = "--pretty";
+    excludeOptions[excludeOptions["max-count"] = 1] = "max-count";
+    excludeOptions[excludeOptions["maxCount"] = 2] = "maxCount";
+    excludeOptions[excludeOptions["n"] = 3] = "n";
+    excludeOptions[excludeOptions["file"] = 4] = "file";
+    excludeOptions[excludeOptions["format"] = 5] = "format";
+    excludeOptions[excludeOptions["from"] = 6] = "from";
+    excludeOptions[excludeOptions["to"] = 7] = "to";
+    excludeOptions[excludeOptions["splitter"] = 8] = "splitter";
+    excludeOptions[excludeOptions["symmetric"] = 9] = "symmetric";
+    excludeOptions[excludeOptions["multiLine"] = 10] = "multiLine";
+    excludeOptions[excludeOptions["strictDate"] = 11] = "strictDate";
+})(excludeOptions || (excludeOptions = {}));
+function prettyFormat(format, splitter) {
+    const fields = [];
+    const formatStr = [];
+    Object.keys(format).forEach((field) => {
+        fields.push(field);
+        formatStr.push(String(format[field]));
+    });
+    return [
+        fields, formatStr.join(splitter)
+    ];
+}
+function userOptions(input) {
+    const output = Object.assign({}, input);
+    Object.keys(input).forEach(key => {
+        if (key in excludeOptions) {
+            delete output[key];
+        }
+    });
+    return output;
+}
+function parseLogOptions(opt = {}, customArgs = []) {
+    const splitter = opt.splitter || parse_list_log_summary_1.SPLITTER;
+    const format = opt.format || {
+        hash: '%H',
+        date: opt.strictDate === false ? '%ai' : '%aI',
+        message: '%s',
+        refs: '%D',
+        body: opt.multiLine ? '%B' : '%b',
+        author_name: '%aN',
+        author_email: '%ae'
+    };
+    const [fields, formatStr] = prettyFormat(format, splitter);
+    const suffix = [];
+    const command = [
+        `--pretty=format:${parse_list_log_summary_1.START_BOUNDARY}${formatStr}${parse_list_log_summary_1.COMMIT_BOUNDARY}`,
+        ...customArgs,
+    ];
+    const maxCount = opt.n || opt['max-count'] || opt.maxCount;
+    if (maxCount) {
+        command.push(`--max-count=${maxCount}`);
+    }
+    if (opt.from && opt.to) {
+        const rangeOperator = (opt.symmetric !== false) ? '...' : '..';
+        suffix.push(`${opt.from}${rangeOperator}${opt.to}`);
+    }
+    if (opt.file) {
+        suffix.push('--follow', opt.file);
+    }
+    utils_1.appendTaskOptions(userOptions(opt), command);
+    return {
+        fields,
+        splitter,
+        commands: [
+            ...command,
+            ...suffix,
+        ],
+    };
+}
+exports.parseLogOptions = parseLogOptions;
+function logTask(splitter, fields, customArgs) {
+    return {
+        commands: ['log', ...customArgs],
+        format: 'utf-8',
+        parser: parse_list_log_summary_1.createListLogSummaryParser(splitter, fields),
+    };
+}
+exports.logTask = logTask;
+//# sourceMappingURL=log.js.map
+
+/***/ }),
+
 /***/ 8829:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.mergeTask = void 0;
 const api_1 = __webpack_require__(4732);
 const parse_merge_1 = __webpack_require__(6412);
 const task_1 = __webpack_require__(2815);
@@ -5726,15 +6061,14 @@ exports.mergeTask = mergeTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.moveTask = void 0;
 const parse_move_1 = __webpack_require__(7444);
 const utils_1 = __webpack_require__(847);
 function moveTask(from, to) {
     return {
         commands: ['mv', '-v', ...utils_1.asArray(from), to],
         format: 'utf-8',
-        parser(stdOut, stdErr) {
-            return parse_move_1.parseMoveResult(stdOut, stdErr);
-        }
+        parser: parse_move_1.parseMoveResult,
     };
 }
 exports.moveTask = moveTask;
@@ -5748,6 +6082,7 @@ exports.moveTask = moveTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.pullTask = void 0;
 const parse_pull_1 = __webpack_require__(5658);
 function pullTask(remote, branch, customArgs) {
     const commands = ['pull', ...customArgs];
@@ -5773,6 +6108,7 @@ exports.pullTask = pullTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.pushTask = exports.pushTagsTask = void 0;
 const parse_push_1 = __webpack_require__(8530);
 const utils_1 = __webpack_require__(847);
 function pushTagsTask(ref = {}, customArgs) {
@@ -5808,8 +6144,9 @@ exports.pushTask = pushTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const task_1 = __webpack_require__(2815);
+exports.removeRemoteTask = exports.remoteTask = exports.listRemotesTask = exports.getRemotesTask = exports.addRemoteTask = void 0;
 const GetRemoteSummary_1 = __webpack_require__(9999);
+const task_1 = __webpack_require__(2815);
 function addRemoteTask(remoteName, remoteRepo, customArgs = []) {
     return task_1.straightThroughStringTask(['remote', 'add', ...customArgs, remoteName, remoteRepo]);
 }
@@ -5856,6 +6193,7 @@ exports.removeRemoteTask = removeRemoteTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getResetMode = exports.resetTask = exports.ResetMode = void 0;
 const task_1 = __webpack_require__(2815);
 var ResetMode;
 (function (ResetMode) {
@@ -5894,12 +6232,36 @@ function isValidResetMode(mode) {
 
 /***/ }),
 
+/***/ 810:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.stashListTask = void 0;
+const parse_list_log_summary_1 = __webpack_require__(9729);
+const log_1 = __webpack_require__(8627);
+function stashListTask(opt = {}, customArgs) {
+    const options = log_1.parseLogOptions(opt);
+    const parser = parse_list_log_summary_1.createListLogSummaryParser(options.splitter, options.fields);
+    return {
+        commands: ['stash', 'list', ...options.commands, ...customArgs],
+        format: 'utf-8',
+        parser,
+    };
+}
+exports.stashListTask = stashListTask;
+//# sourceMappingURL=stash-list.js.map
+
+/***/ }),
+
 /***/ 9197:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.statusTask = void 0;
 const StatusSummary_1 = __webpack_require__(6790);
 function statusTask(customArgs) {
     return {
@@ -5921,6 +6283,7 @@ exports.statusTask = statusTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.updateSubModuleTask = exports.subModuleTask = exports.initSubModuleTask = exports.addSubModuleTask = void 0;
 const task_1 = __webpack_require__(2815);
 function addSubModuleTask(repo, path) {
     return subModuleTask(['add', repo, path]);
@@ -5952,6 +6315,7 @@ exports.updateSubModuleTask = updateSubModuleTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.addAnnotatedTagTask = exports.addTagTask = exports.tagListTask = void 0;
 const TagList_1 = __webpack_require__(4539);
 /**
  * Task used by `git.tags`
@@ -6003,6 +6367,7 @@ exports.addAnnotatedTagTask = addAnnotatedTagTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isEmptyTask = exports.isBufferTask = exports.straightThroughStringTask = exports.configurationErrorTask = exports.adhocExecTask = exports.EMPTY_COMMANDS = void 0;
 const task_configuration_error_1 = __webpack_require__(740);
 exports.EMPTY_COMMANDS = [];
 function adhocExecTask(parser) {
@@ -6051,6 +6416,7 @@ exports.isEmptyTask = isEmptyTask;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.filterHasLength = exports.filterFunction = exports.filterPlainObject = exports.filterStringOrStringArray = exports.filterStringArray = exports.filterString = exports.filterPrimitives = exports.filterArray = exports.filterType = void 0;
 const util_1 = __webpack_require__(8237);
 function filterType(input, filter, def) {
     if (filter(input)) {
@@ -6059,16 +6425,26 @@ function filterType(input, filter, def) {
     return (arguments.length > 2) ? def : undefined;
 }
 exports.filterType = filterType;
-exports.filterArray = (input) => {
+const filterArray = (input) => {
     return Array.isArray(input);
 };
+exports.filterArray = filterArray;
 function filterPrimitives(input, omit) {
     return /number|string|boolean/.test(typeof input) && (!omit || !omit.includes((typeof input)));
 }
 exports.filterPrimitives = filterPrimitives;
-exports.filterString = (input) => {
+const filterString = (input) => {
     return typeof input === 'string';
 };
+exports.filterString = filterString;
+const filterStringArray = (input) => {
+    return Array.isArray(input) && input.every(exports.filterString);
+};
+exports.filterStringArray = filterStringArray;
+const filterStringOrStringArray = (input) => {
+    return exports.filterString(input) || (Array.isArray(input) && input.every(exports.filterString));
+};
+exports.filterStringOrStringArray = filterStringOrStringArray;
 function filterPlainObject(input) {
     return !!input && util_1.objectToString(input) === '[object Object]';
 }
@@ -6077,12 +6453,13 @@ function filterFunction(input) {
     return typeof input === 'function';
 }
 exports.filterFunction = filterFunction;
-exports.filterHasLength = (input) => {
+const filterHasLength = (input) => {
     if (input == null || 'number|boolean|function'.includes(typeof input)) {
         return false;
     }
     return Array.isArray(input) || typeof input === 'string' || typeof input.length === 'number';
 };
+exports.filterHasLength = filterHasLength;
 //# sourceMappingURL=argument-filters.js.map
 
 /***/ }),
@@ -6093,6 +6470,7 @@ exports.filterHasLength = (input) => {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ExitCodes = void 0;
 /**
  * Known process exit codes used by the task parsers to determine whether an error
  * was one they can automatically handle
@@ -6113,6 +6491,7 @@ var ExitCodes;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitOutputStreams = void 0;
 class GitOutputStreams {
     constructor(stdOut, stdErr) {
         this.stdOut = stdOut;
@@ -6128,22 +6507,29 @@ exports.GitOutputStreams = GitOutputStreams;
 /***/ }),
 
 /***/ 847:
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
 
-function __export(m) {
-    for (var p in m) if (!exports.hasOwnProperty(p)) exports[p] = m[p];
-}
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-__export(__webpack_require__(7366));
-__export(__webpack_require__(2185));
-__export(__webpack_require__(6578));
-__export(__webpack_require__(9536));
-__export(__webpack_require__(5218));
-__export(__webpack_require__(3546));
-__export(__webpack_require__(1351));
-__export(__webpack_require__(8237));
+__exportStar(__webpack_require__(7366), exports);
+__exportStar(__webpack_require__(2185), exports);
+__exportStar(__webpack_require__(6578), exports);
+__exportStar(__webpack_require__(9536), exports);
+__exportStar(__webpack_require__(5218), exports);
+__exportStar(__webpack_require__(3546), exports);
+__exportStar(__webpack_require__(1351), exports);
+__exportStar(__webpack_require__(8237), exports);
 //# sourceMappingURL=index.js.map
 
 /***/ }),
@@ -6154,6 +6540,7 @@ __export(__webpack_require__(8237));
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RemoteLineParser = exports.LineParser = void 0;
 class LineParser {
     constructor(regExp, useMatches) {
         this.matches = [];
@@ -6212,6 +6599,7 @@ exports.RemoteLineParser = RemoteLineParser;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createInstanceConfig = void 0;
 const defaultOptions = {
     binary: 'git',
     maxConcurrentProcesses: 5,
@@ -6233,6 +6621,7 @@ exports.createInstanceConfig = createInstanceConfig;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.trailingFunctionArgument = exports.trailingOptionsArgument = exports.getTrailingOptions = exports.appendTaskOptions = void 0;
 const argument_filters_1 = __webpack_require__(7366);
 const util_1 = __webpack_require__(8237);
 function appendTaskOptions(options, commands = []) {
@@ -6297,21 +6686,24 @@ exports.trailingFunctionArgument = trailingFunctionArgument;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseStringResponse = exports.callTaskParser = void 0;
 const util_1 = __webpack_require__(8237);
 function callTaskParser(parser, streams) {
     return parser(streams.stdOut, streams.stdErr);
 }
 exports.callTaskParser = callTaskParser;
-function parseStringResponse(result, parsers, text) {
-    for (let lines = util_1.toLinesWithContent(text), i = 0, max = lines.length; i < max; i++) {
-        const line = (offset = 0) => {
-            if ((i + offset) >= max) {
-                return;
-            }
-            return lines[i + offset];
-        };
-        parsers.some(({ parse }) => parse(line, result));
-    }
+function parseStringResponse(result, parsers, ...texts) {
+    texts.forEach(text => {
+        for (let lines = util_1.toLinesWithContent(text), i = 0, max = lines.length; i < max; i++) {
+            const line = (offset = 0) => {
+                if ((i + offset) >= max) {
+                    return;
+                }
+                return lines[i + offset];
+            };
+            parsers.some(({ parse }) => parse(line, result));
+        }
+    });
     return result;
 }
 exports.parseStringResponse = parseStringResponse;
@@ -6325,9 +6717,11 @@ exports.parseStringResponse = parseStringResponse;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.asNumber = exports.asStringArray = exports.asArray = exports.objectToString = exports.remove = exports.append = exports.folderExists = exports.forEachLineWithContent = exports.toLinesWithContent = exports.last = exports.first = exports.splitOn = exports.isUserFunction = exports.asFunction = exports.NOOP = void 0;
 const file_exists_1 = __webpack_require__(4751);
-exports.NOOP = () => {
+const NOOP = () => {
 };
+exports.NOOP = NOOP;
 /**
  * Returns either the source argument when it is a `Function`, or the default
  * `NOOP` function constant
@@ -6368,8 +6762,8 @@ exports.last = last;
 function isArrayLike(input) {
     return !!(input && typeof input.length === 'number');
 }
-function toLinesWithContent(input, trimmed = true) {
-    return input.split('\n')
+function toLinesWithContent(input, trimmed = true, separator = '\n') {
+    return input.split(separator)
         .reduce((output, line) => {
         const lineContent = trimmed ? line.trim() : line;
         if (lineContent) {
@@ -6433,328 +6827,6 @@ function asNumber(source, onNaN = 0) {
 }
 exports.asNumber = asNumber;
 //# sourceMappingURL=util.js.map
-
-/***/ }),
-
-/***/ 921:
-/***/ ((module) => {
-
-
-module.exports = CommitSummary;
-
-function CommitSummary () {
-   this.branch = '';
-   this.commit = '';
-   this.summary = {
-      changes: 0,
-      insertions: 0,
-      deletions: 0
-   };
-   this.author = null;
-}
-
-var COMMIT_BRANCH_MESSAGE_REGEX = /\[([^\s]+) ([^\]]+)/;
-var COMMIT_AUTHOR_MESSAGE_REGEX = /\s*Author:\s(.+)/i;
-
-function setBranchFromCommit (commitSummary, commitData) {
-   if (commitData) {
-      commitSummary.branch = commitData[1];
-      commitSummary.commit = commitData[2];
-   }
-}
-
-function setSummaryFromCommit (commitSummary, commitData) {
-   if (commitSummary.branch && commitData) {
-      commitSummary.summary.changes = parseInt(commitData[1], 10) || 0;
-      commitSummary.summary.insertions = parseInt(commitData[2], 10) || 0;
-      commitSummary.summary.deletions = parseInt(commitData[3], 10) || 0;
-   }
-}
-
-function setAuthorFromCommit (commitSummary, commitData) {
-   var parts = commitData[1].split('<');
-   var email = parts.pop();
-
-   if (email.indexOf('@') <= 0) {
-      return;
-   }
-
-   commitSummary.author = {
-      email: email.substr(0, email.length - 1),
-      name: parts.join('<').trim()
-   };
-}
-
-CommitSummary.parse = function (commit) {
-   var lines = commit.trim().split('\n');
-   var commitSummary = new CommitSummary();
-
-   setBranchFromCommit(commitSummary, COMMIT_BRANCH_MESSAGE_REGEX.exec(lines.shift()));
-
-   if (COMMIT_AUTHOR_MESSAGE_REGEX.test(lines[0])) {
-      setAuthorFromCommit(commitSummary, COMMIT_AUTHOR_MESSAGE_REGEX.exec(lines.shift()));
-   }
-
-   setSummaryFromCommit(commitSummary, /(\d+)[^,]*(?:,\s*(\d+)[^,]*)?(?:,\s*(\d+))?/g.exec(lines.shift()));
-
-   return commitSummary;
-};
-
-
-/***/ }),
-
-/***/ 7286:
-/***/ ((module) => {
-
-
-module.exports = DiffSummary;
-
-/**
- * The DiffSummary is returned as a response to getting `git().status()`
- *
- * @constructor
- */
-function DiffSummary () {
-   this.files = [];
-   this.insertions = 0;
-   this.deletions = 0;
-   this.changed = 0;
-}
-
-/**
- * Number of lines added
- * @type {number}
- */
-DiffSummary.prototype.insertions = 0;
-
-/**
- * Number of lines deleted
- * @type {number}
- */
-DiffSummary.prototype.deletions = 0;
-
-/**
- * Number of files changed
- * @type {number}
- */
-DiffSummary.prototype.changed = 0;
-
-DiffSummary.parse = function (text) {
-   var line, handler;
-
-   var lines = text.trim().split('\n');
-   var status = new DiffSummary();
-
-   var summary = lines.pop();
-   if (summary) {
-      summary.trim().split(', ').forEach(function (text) {
-         var summary = /(\d+)\s([a-z]+)/.exec(text);
-         if (!summary) {
-            return;
-         }
-
-         if (/files?/.test(summary[2])) {
-            status.changed = parseInt(summary[1], 10);
-         }
-         else {
-            status[summary[2].replace(/s$/, '') + 's'] = parseInt(summary[1], 10);
-         }
-      });
-   }
-
-   while (line = lines.shift()) {
-      textFileChange(line, status.files) || binaryFileChange(line, status.files);
-   }
-
-   return status;
-};
-
-function textFileChange (line, files) {
-   line = line.trim().match(/^(.+)\s+\|\s+(\d+)(\s+[+\-]+)?$/);
-
-   if (line) {
-      var alterations = (line[3] || '').trim();
-      files.push({
-         file: line[1].trim(),
-         changes: parseInt(line[2], 10),
-         insertions: alterations.replace(/-/g, '').length,
-         deletions: alterations.replace(/\+/g, '').length,
-         binary: false
-      });
-
-      return true;
-   }
-}
-
-function binaryFileChange (line, files) {
-   line = line.match(/^(.+) \|\s+Bin ([0-9.]+) -> ([0-9.]+) ([a-z]+)$/);
-   if (line) {
-      files.push({
-         file: line[1].trim(),
-         before: +line[2],
-         after: +line[3],
-         binary: true
-      });
-      return true;
-   }
-}
-
-
-/***/ }),
-
-/***/ 5169:
-/***/ ((module) => {
-
-"use strict";
-
-
-function FetchSummary (raw) {
-   this.raw = raw;
-
-   this.remote = null;
-   this.branches = [];
-   this.tags = [];
-}
-
-FetchSummary.parsers = [
-   [
-      /From (.+)$/, function (fetchSummary, matches) {
-         fetchSummary.remote = matches[0];
-      }
-   ],
-   [
-      /\* \[new branch\]\s+(\S+)\s*\-> (.+)$/, function (fetchSummary, matches) {
-         fetchSummary.branches.push({
-            name: matches[0],
-            tracking: matches[1]
-         });
-      }
-   ],
-   [
-      /\* \[new tag\]\s+(\S+)\s*\-> (.+)$/, function (fetchSummary, matches) {
-         fetchSummary.tags.push({
-            name: matches[0],
-            tracking: matches[1]
-         });
-      }
-   ]
-];
-
-FetchSummary.parse = function (data) {
-   var fetchSummary = new FetchSummary(data);
-
-   String(data)
-      .trim()
-      .split('\n')
-      .forEach(function (line) {
-         var original = line.trim();
-         FetchSummary.parsers.some(function (parser) {
-            var parsed = parser[0].exec(original);
-            if (parsed) {
-               parser[1](fetchSummary, parsed.slice(1));
-               return true;
-            }
-         });
-      });
-
-   return fetchSummary;
-};
-
-module.exports = FetchSummary;
-
-
-/***/ }),
-
-/***/ 6507:
-/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
-
-
-module.exports = ListLogSummary;
-
-var DiffSummary = __webpack_require__(7286);
-
-/**
- * The ListLogSummary is returned as a response to getting `git().log()` or `git().stashList()`
- *
- * @constructor
- */
-function ListLogSummary (all) {
-   this.all = all;
-   this.latest = all.length && all[0] || null;
-   this.total = all.length;
-}
-
-/**
- * Detail for each of the log lines
- * @type {ListLogLine[]}
- */
-ListLogSummary.prototype.all = null;
-
-/**
- * Most recent entry in the log
- * @type {ListLogLine}
- */
-ListLogSummary.prototype.latest = null;
-
-/**
- * Number of items in the log
- * @type {number}
- */
-ListLogSummary.prototype.total = 0;
-
-function ListLogLine (line, fields) {
-   for (var k = 0; k < fields.length; k++) {
-      this[fields[k]] = line[k] || '';
-   }
-}
-
-/**
- * When the log was generated with a summary, the `diff` property contains as much detail
- * as was provided in the log (whether generated with `--stat` or `--shortstat`.
- * @type {DiffSummary}
- */
-ListLogLine.prototype.diff = null;
-
-ListLogSummary.START_BOUNDARY = 'òòòòòò ';
-
-ListLogSummary.COMMIT_BOUNDARY = ' òò';
-
-ListLogSummary.SPLITTER = ' ò ';
-
-ListLogSummary.parse = function (text, splitter, fields) {
-   fields = fields || ['hash', 'date', 'message', 'refs', 'author_name', 'author_email'];
-   return new ListLogSummary(
-      text
-         .trim()
-         .split(ListLogSummary.START_BOUNDARY)
-         .filter(function(item) { return !!item.trim(); })
-         .map(function (item) {
-            var lineDetail = item.trim().split(ListLogSummary.COMMIT_BOUNDARY);
-            var listLogLine = new ListLogLine(lineDetail[0].trim().split(splitter), fields);
-
-            if (lineDetail.length > 1 && !!lineDetail[1].trim()) {
-               listLogLine.diff = DiffSummary.parse(lineDetail[1]);
-            }
-
-            return listLogLine;
-         })
-   );
-};
-
-
-/***/ }),
-
-/***/ 5301:
-/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
-
-
-module.exports = {
-   CommitSummary: __webpack_require__(921),
-   DiffSummary: __webpack_require__(7286),
-   FetchSummary: __webpack_require__(5169),
-   ListLogSummary: __webpack_require__(6507),
-};
-
 
 /***/ }),
 
