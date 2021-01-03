@@ -1,4 +1,4 @@
-name: 'Git Log'
+name: 'Git Log Changelog Action'
 description: 'Provides latest git log between previous and latest tag'
 author: 'nils'
 runs:

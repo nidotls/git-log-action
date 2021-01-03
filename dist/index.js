@@ -63,11 +63,13 @@ function run() {
             let markdownLog = '';
             for (const commit of commits.all) {
                 textLog += `${commit.abbrev} - ${commit.author} - ${commit.message}\n`;
-                markdownLog += `[${commit.abbrev}](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/commit/${commit.abbrev}) ${commit.author} - ${commit.message}\n`;
+                markdownLog += `[\`${commit.abbrev}\`](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/commit/${commit.abbrev}) ${commit.author} - ${commit.message}\n`;
             }
             core.info(`previousTag: ${previousTag}`);
             core.info(`latestTag: ${latestTag}`);
             core.info(textLog);
+            core.setOutput('previousTag', previousTag);
+            core.setOutput('latestTag', latestTag);
             core.setOutput('log', textLog);
             core.setOutput('markdownLog', markdownLog);
         }
