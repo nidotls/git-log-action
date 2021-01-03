@@ -1,0 +1,28 @@
+name: Release Github
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    name: Release Github
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Get Git Changelog
+        id: get_changelog
+        uses: thenilsdev/git-log-action@1.0.2
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: ${{ steps.get_changelog.outputs.log }}
