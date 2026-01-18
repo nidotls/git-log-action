@@ -77,12 +77,13 @@ def5678 - @username - Add new feature
 
 **Markdown (`markdownLog`):**
 
+<!-- prettier-ignore-start -->
 ```markdown
 [`abc1234`](https://github.com/owner/repo/commit/abc1234) @username - Fix bug in
 parser
-[`def5678`](https://github.com/owner/repo/commit/def5678) @username - Add
-new feature
+[`def5678`](https://github.com/owner/repo/commit/def5678) @username - Add new feature
 ```
+<!-- prettier-ignore-end -->
 
 ## Development
 
