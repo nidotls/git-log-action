@@ -1,6 +1,33 @@
-name: 'Git Log Changelog Action'
-description: 'Provides latest git log between previous and latest tag'
-author: 'nils'
+name: Git Log Action
+description: Generate a commit-based changelog between two git tags
+author: nils
+
+branding:
+  icon: git-commit
+  color: gray-dark
+
+inputs:
+  from-tag:
+    description: >
+      The starting tag for the changelog (exclusive). If not specified,
+      auto-detects the second-to-last tag.
+    required: false
+  to-tag:
+    description: >
+      The ending tag for the changelog (inclusive). If not specified,
+      auto-detects the latest tag.
+    required: false
+
+outputs:
+  previousTag:
+    description: The resolved starting tag (may be empty if only one tag exists)
+  latestTag:
+    description: The resolved ending tag
+  log:
+    description: Plain text changelog (one commit per line)
+  markdownLog:
+    description: Markdown formatted changelog with commit links
+
 runs:
-  using: 'node12'
-  main: 'dist/index.js'
+  using: node24
+  main: dist/index.js
