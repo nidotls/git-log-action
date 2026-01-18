@@ -6,7 +6,7 @@
 ![CodeQL](https://github.com/actions/typescript-action/actions/workflows/codeql-analysis.yml/badge.svg)
 ![Coverage](./badges/coverage.svg)
 
-A GitHub Action that generates a commit-based changelog between two git tags.
+A GitHub Action that generates a commit-based changelog between two Git tags.
 
 ## Usage
 
@@ -15,27 +15,29 @@ A GitHub Action that generates a commit-based changelog between two git tags.
   id: changelog
 ```
 
-By default, the action auto-detects the two most recent tags and generates a changelog of commits between them.
+By default, the action auto-detects the two most recent tags and generates a
+changelog of commits between them.
 
 ### Inputs
 
-| Input | Description | Required | Default |
-|-------|-------------|----------|---------|
-| `from-tag` | Starting tag (exclusive) | No | Second-to-last tag |
-| `to-tag` | Ending tag (inclusive) | No | Latest tag |
+| Input      | Description              | Required | Default            |
+| ---------- | ------------------------ | -------- | ------------------ |
+| `from-tag` | Starting tag (exclusive) | No       | Second-to-last tag |
+| `to-tag`   | Ending tag (inclusive)   | No       | Latest tag         |
 
 ### Outputs
 
-| Output | Description |
-|--------|-------------|
+| Output        | Description                                              |
+| ------------- | -------------------------------------------------------- |
 | `previousTag` | The resolved starting tag (empty if only one tag exists) |
-| `latestTag` | The resolved ending tag |
-| `log` | Plain text changelog (one commit per line) |
-| `markdownLog` | Markdown formatted changelog with commit links |
+| `latestTag`   | The resolved ending tag                                  |
+| `log`         | Plain text changelog (one commit per line)               |
+| `markdownLog` | Markdown formatted changelog with commit links           |
 
 ### Examples
 
 **Auto-detect tags:**
+
 ```yaml
 - uses: nidotls/git-log-action@v2
   id: changelog
@@ -44,6 +46,7 @@ By default, the action auto-detects the two most recent tags and generates a cha
 ```
 
 **Specify tags manually:**
+
 ```yaml
 - uses: nidotls/git-log-action@v2
   id: changelog
@@ -52,7 +55,8 @@ By default, the action auto-detects the two most recent tags and generates a cha
     to-tag: v1.1.0
 ```
 
-**Use markdown output in a release:**
+**Use Markdown output in a release:**
+
 ```yaml
 - uses: nidotls/git-log-action@v2
   id: changelog
@@ -65,15 +69,18 @@ By default, the action auto-detects the two most recent tags and generates a cha
 ## Output Formats
 
 **Plain text (`log`):**
-```
+
+```txt
 abc1234 - @username - Fix bug in parser
 def5678 - @username - Add new feature
 ```
 
 **Markdown (`markdownLog`):**
+
 ```markdown
-[`abc1234`](https://github.com/owner/repo/commit/abc1234) @username - Fix bug in parser
-[`def5678`](https://github.com/owner/repo/commit/def5678) @username - Add new feature
+[`abc1234`](https://github.com/owner/repo/commit/abc1234) @username - Fix bug in
+parser [`def5678`](https://github.com/owner/repo/commit/def5678) @username - Add
+new feature
 ```
 
 ## Development

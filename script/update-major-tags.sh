@@ -10,7 +10,7 @@ VERSION="$1"
 VERSION="${VERSION#v}"
 
 # Parse version components
-IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+IFS='.' read -r MAJOR MINOR _ <<<"$VERSION"
 
 # Configure git
 git config user.name "github-actions[bot]"

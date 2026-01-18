@@ -42,7 +42,12 @@ jobs:
         run: npm run package
 
       - name: Install semantic-release and plugins
-        run: "npm install -g semantic-release @semantic-release/changelog @semantic-release/commit-analyzer @semantic-release/exec @semantic-release/git @semantic-release/github @semantic-release/release-notes-generator conventional-changelog-conventionalcommits"
+        run:
+          'npm install -g semantic-release @semantic-release/changelog
+          @semantic-release/commit-analyzer @semantic-release/exec
+          @semantic-release/git @semantic-release/github
+          @semantic-release/release-notes-generator
+          conventional-changelog-conventionalcommits'
 
       - name: Release
         env:
