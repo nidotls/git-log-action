@@ -22,11 +22,7 @@
     [
       "@semantic-release/git",
       {
-        "assets": [
-          "package.json",
-          "package-lock.json",
-          "dist/**"
-        ],
+        "assets": ["package.json", "package-lock.json", "dist/**"],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ],
