@@ -70,7 +70,7 @@ changelog of commits between them.
 
 **Plain text (`log`):**
 
-```
+```txt
 abc1234 - @username - Fix bug in parser
 def5678 - @username - Add new feature
 ```
