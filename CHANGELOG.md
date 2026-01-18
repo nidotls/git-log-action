@@ -1,3 +1,9 @@
+## [2.0.1](https://github.com/nidotls/git-log-action/compare/v2.0.0...v2.0.1) (2026-01-18)
+
+### Bug Fixes
+
+* fix release workflow not able to use git cli to create manual tags ([2769648](https://github.com/nidotls/git-log-action/commit/27696482da74352e3d0172071b2cdd3449585f64))
+
 ## [2.0.0](https://github.com/nidotls/git-log-action/compare/v1.0.5...v2.0.0) (2026-01-18)
 
 ### ⚠ BREAKING CHANGES
