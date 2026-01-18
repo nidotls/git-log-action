@@ -79,7 +79,8 @@ def5678 - @username - Add new feature
 
 ```markdown
 [`abc1234`](https://github.com/owner/repo/commit/abc1234) @username - Fix bug in
-parser [`def5678`](https://github.com/owner/repo/commit/def5678) @username - Add
+parser
+[`def5678`](https://github.com/owner/repo/commit/def5678) @username - Add
 new feature
 ```
 
