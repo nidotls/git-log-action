@@ -1,7 +1,7 @@
 {
   "name": "git-log-action",
   "description": "GitHub Action to generate a commit-based changelog between git tags",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "author": "nils",
   "type": "module",
   "private": true,
