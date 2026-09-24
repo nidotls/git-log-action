@@ -40,13 +40,17 @@ jobs:
       - name: Build
         run: npm run package
 
+      # Versions are pinned to major ranges. Unpinned installs broke the
+      # release when conventional-changelog-conventionalcommits@10 started
+      # requiring conventional-changelog-writer@9, which
+      # @semantic-release/release-notes-generator@14 does not ship.
       - name: Install semantic-release and plugins
         run:
-          'npm install -g semantic-release @semantic-release/changelog
-          @semantic-release/commit-analyzer @semantic-release/exec
-          @semantic-release/git @semantic-release/github
-          @semantic-release/release-notes-generator
-          conventional-changelog-conventionalcommits'
+          'npm install -g semantic-release@^25 @semantic-release/changelog@^7
+          @semantic-release/commit-analyzer@^13 @semantic-release/exec@^7
+          @semantic-release/git@^11 @semantic-release/github@^12
+          @semantic-release/release-notes-generator@^14
+          conventional-changelog-conventionalcommits@^9'
 
       - name: Release
         env:
